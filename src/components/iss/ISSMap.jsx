@@ -8,12 +8,17 @@ const issIcon = L.divIcon({
   className: '',
 })
 
-export function ISSMap({ positions, speed }) {
+export function ISSMap({ positions, speed, unavailable = false }) {
   const current = positions[positions.length - 1]
   const polyline = positions.map((p) => [p.lat, p.lon])
 
   return (
     <div className="panel h-[430px] w-full overflow-hidden p-2">
+      {unavailable && (
+        <div className="mb-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300">
+          Live telemetry is unavailable. Map will resume when data is back.
+        </div>
+      )}
       <MapContainer
         center={current ? [current.lat, current.lon] : [20, 0]}
         zoom={2}

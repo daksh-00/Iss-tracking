@@ -2,6 +2,7 @@ import { Gauge, Globe, MapPin, Navigation, Satellite, Users } from 'lucide-react
 import { motion } from 'framer-motion'
 
 export function ISSStats({ current, speed, location, positions, people }) {
+  const isFallbackTelemetry = Boolean(current?.isFallback)
   const cards = [
     { label: 'Latitude', value: current ? current.lat.toFixed(4) : '--', icon: <MapPin size={16} /> },
     { label: 'Longitude', value: current ? current.lon.toFixed(4) : '--', icon: <Globe size={16} /> },
@@ -40,9 +41,15 @@ export function ISSStats({ current, speed, location, positions, people }) {
         <p className="mt-1 text-sm text-slate-500 dark:text-slate-300">
           Timestamp: {current?.timestamp ? new Date(current.timestamp * 1000).toLocaleString() : '--'}
         </p>
-        <div className="mt-3 inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/40 dark:text-emerald-300">
+        <div
+          className={`mt-3 inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-medium ${
+            isFallbackTelemetry
+              ? 'border border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/70 dark:bg-amber-950/40 dark:text-amber-300'
+              : 'border border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/40 dark:text-emerald-300'
+          }`}
+        >
           <span className="live-dot" />
-          Telemetry Live
+          {isFallbackTelemetry ? 'Telemetry Fallback' : 'Telemetry Live'}
           <Satellite size={12} />
         </div>
       </div>

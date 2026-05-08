@@ -23,27 +23,34 @@ export function useISSData() {
         setPeopleLoading(true)
       }
       const [positionResult, peopleResult] = await Promise.allSettled([getISSPosition(), getPeopleInSpace()])
-      if (positionResult.status !== 'fulfilled') {
-        throw positionResult.reason
-      }
-      const position = positionResult.value
-      const peopleData = peopleResult.status === 'fulfilled' ? peopleResult.value : { people: [] }
-      const nearest = await Promise.race([
-        getNearestLocation(position.lat, position.lon),
-        new Promise((resolve) => setTimeout(() => resolve('Over Ocean'), 4500)),
-      ])
       if (!isMountedRef.current) return
-      setPeople(peopleData.people || [])
-      if (peopleResult.status !== 'fulfilled') {
+
+      if (positionResult.status === 'fulfilled') {
+        const position = positionResult.value
+        const nearest = await Promise.race([
+          getNearestLocation(position.lat, position.lon),
+          new Promise((resolve) => setTimeout(() => resolve('Over Ocean'), 4500)),
+        ])
+        if (!isMountedRef.current) return
+        setPositions((prev) => [...prev, position].slice(-MAX_POSITIONS))
+        setLocation(nearest)
+      } else {
+        console.error('[ISS API] refresh failed: ISS telemetry unavailable', positionResult.reason)
+        setError('Live ISS telemetry is temporarily unavailable. Showing last known data if available.')
+        if (manual) toast.error('ISS refresh failed')
+      }
+
+      if (peopleResult.status === 'fulfilled') {
+        setPeople(peopleResult.value.people || [])
+        if (peopleResult.value.isFallback) {
+          setPeopleError('People-in-space data is temporarily stale.')
+        }
+      } else {
+        console.error('[ISS API] refresh failed: people-in-space unavailable', peopleResult.reason)
         setPeopleError('Unable to fetch people-in-space data.')
       }
-      setPositions((prev) => [...prev, position].slice(-MAX_POSITIONS))
-      setLocation(nearest)
-      if (manual) toast.success('ISS data refreshed')
-    } catch (err) {
-      if (!isMountedRef.current) return
-      setError('Unable to fetch ISS data right now.')
-      if (manual) toast.error('ISS refresh failed')
+
+      if (manual && positionResult.status === 'fulfilled') toast.success('ISS data refreshed')
     } finally {
       if (isMountedRef.current) {
         setPeopleLoading(false)

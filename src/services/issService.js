@@ -2,12 +2,17 @@ import axios from 'axios'
 
 const ISS_POSITION_URL = 'https://api.wheretheiss.at/v1/satellites/25544'
 const ISS_POSITION_PROXY_URL = 'https://corsproxy.io/?https://api.wheretheiss.at/v1/satellites/25544'
-const PEOPLE_IN_SPACE_URL = 'https://ll.thespacedevs.com/2.2.0/astronaut/?in_space=true&limit=100'
-const PEOPLE_IN_SPACE_FALLBACK_URL = 'http://api.open-notify.org/astros.json'
-const ISS_POSITION_FALLBACK_URL = 'https://api.allorigins.win/raw?url=http://api.open-notify.org/iss-now.json'
+const PEOPLE_IN_SPACE_URL = 'https://corquaid.github.io/international-space-station-APIs/JSON/people-in-space.json'
 const NOMINATIM_BASE = 'https://nominatim.openstreetmap.org/reverse'
 const LAST_ISS_KEY = 'iss-last-known-position'
+const LAST_PEOPLE_KEY = 'iss-last-known-people'
 const ISS_REQUEST_TIMEOUT = 10000
+const RETRY_ATTEMPTS = 2
+const RETRY_DELAY_MS = 600
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
 
 function saveLastKnownPosition(position) {
   try {
@@ -27,6 +32,44 @@ function getLastKnownPosition() {
   }
 }
 
+function saveLastKnownPeople(peopleData) {
+  try {
+    localStorage.setItem(LAST_PEOPLE_KEY, JSON.stringify(peopleData))
+  } catch {
+    // Ignore storage failures.
+  }
+}
+
+function getLastKnownPeople() {
+  try {
+    const raw = localStorage.getItem(LAST_PEOPLE_KEY)
+    if (!raw) return null
+    return JSON.parse(raw)
+  } catch {
+    return null
+  }
+}
+
+async function fetchWithRetry(url, config = {}, options = {}) {
+  const { retries = RETRY_ATTEMPTS, label = 'request' } = options
+  let lastError
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      return await axios.get(url, {
+        timeout: ISS_REQUEST_TIMEOUT,
+        ...config,
+      })
+    } catch (error) {
+      lastError = error
+      console.error(`[ISS API] ${label} failed (attempt ${attempt + 1}/${retries + 1})`, error)
+      if (attempt < retries) {
+        await sleep(RETRY_DELAY_MS * (attempt + 1))
+      }
+    }
+  }
+  throw lastError
+}
+
 function mapWhereTheIssPosition(data) {
   return {
     lat: Number(data.latitude ?? 0),
@@ -41,86 +84,66 @@ function mapWhereTheIssPosition(data) {
 export async function getISSPosition() {
   const cacheBust = Date.now()
   try {
-    const { data } = await axios.get(ISS_POSITION_URL, {
-      timeout: ISS_REQUEST_TIMEOUT,
+    const { data } = await fetchWithRetry(ISS_POSITION_URL, {
       params: { _: cacheBust },
       headers: { 'Cache-Control': 'no-cache' },
-    })
+    }, { label: 'ISS position primary' })
     const mapped = mapWhereTheIssPosition(data)
     saveLastKnownPosition(mapped)
     return mapped
   } catch (error) {
     try {
-      const { data } = await axios.get(ISS_POSITION_PROXY_URL, {
-        timeout: ISS_REQUEST_TIMEOUT,
+      const { data } = await fetchWithRetry(ISS_POSITION_PROXY_URL, {
         params: { _: cacheBust },
         headers: { 'Cache-Control': 'no-cache' },
-      })
+      }, { label: 'ISS position proxy' })
       const mapped = mapWhereTheIssPosition(data)
       saveLastKnownPosition(mapped)
       return mapped
-    } catch (fallbackError) {
-      try {
-        const { data } = await axios.get(ISS_POSITION_FALLBACK_URL, {
-          timeout: ISS_REQUEST_TIMEOUT,
-          params: { _: cacheBust },
-          headers: { 'Cache-Control': 'no-cache' },
-        })
-        const mapped = {
-          lat: Number(data?.iss_position?.latitude ?? 0),
-          lon: Number(data?.iss_position?.longitude ?? 0),
-          altitude: 0,
-          velocity: 0,
-          visibility: 'unknown',
-          timestamp: Number(data?.timestamp ?? Math.floor(Date.now() / 1000)),
+    } catch (proxyError) {
+      console.error('[ISS API] Unable to fetch ISS position from all HTTPS endpoints.', proxyError)
+      const lastKnown = getLastKnownPosition()
+      if (lastKnown) {
+        return {
+          ...lastKnown,
+          timestamp: Math.floor(Date.now() / 1000),
           isFallback: true,
         }
-        saveLastKnownPosition(mapped)
-        return mapped
-      } catch (openNotifyError) {
-        const lastKnown = getLastKnownPosition()
-        if (lastKnown) {
-          return {
-            ...lastKnown,
-            timestamp: Math.floor(Date.now() / 1000),
-            isFallback: true,
-          }
-        }
-        throw openNotifyError
       }
+      throw proxyError
     }
   }
 }
 
 export async function getPeopleInSpace() {
   try {
-    const { data } = await axios.get(PEOPLE_IN_SPACE_URL, { timeout: ISS_REQUEST_TIMEOUT })
-    const people = Array.isArray(data.results)
-      ? data.results.map((astronaut) => ({
-          name: astronaut.name,
-          craft: astronaut.flights_count ? `Flights: ${astronaut.flights_count}` : 'In Orbit',
-        }))
-      : []
+    const { data } = await fetchWithRetry(PEOPLE_IN_SPACE_URL, {}, { label: 'People in space' })
+    const people = Array.isArray(data?.people) ? data.people : []
     if (people.length === 0) {
-      throw new Error('No people data from primary API')
+      throw new Error('No people data from source API')
+    }
+    const normalized = {
+      number: Number(data.count ?? people.length),
+      people: people.map((person) => ({
+        name: person.name,
+        craft: person.craft || 'ISS',
+      })),
+    }
+    saveLastKnownPeople(normalized)
+    return normalized
+  } catch (error) {
+    console.error('[ISS API] Unable to fetch people in space.', error)
+    const lastKnownPeople = getLastKnownPeople()
+    if (lastKnownPeople) {
+      return {
+        ...lastKnownPeople,
+        isFallback: true,
+      }
     }
     return {
-      number: Number(data.count ?? people.length),
-      people,
-    }
-  } catch (error) {
-    try {
-      const { data } = await axios.get(PEOPLE_IN_SPACE_FALLBACK_URL, { timeout: ISS_REQUEST_TIMEOUT })
-      const people = Array.isArray(data.people) ? data.people : []
-      if (people.length === 0) {
-        throw new Error('No people data from fallback API')
-      }
-      return {
-        number: Number(data.number ?? people.length),
-        people,
-      }
-    } catch (fallbackError) {
-      throw fallbackError
+      number: 0,
+      people: [],
+      isFallback: true,
     }
   }
 }

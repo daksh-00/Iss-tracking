@@ -49,21 +49,22 @@ export function DashboardPage() {
         </button>
       </div>
 
-      {iss.loading ? (
+      {iss.loading && iss.positions.length === 0 ? (
         <SkeletonCard />
-      ) : iss.error ? (
-        <div className="rounded-xl border border-red-300 bg-red-50 p-4 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
-          {iss.error}
-        </div>
       ) : (
         <div className="space-y-5">
+          {iss.error && (
+            <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-700 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300">
+              {iss.error}
+            </div>
+          )}
           <ISSStats current={iss.current} speed={iss.speed} location={iss.location} positions={iss.positions} people={iss.people} />
-          <ISSMap positions={iss.positions} speed={iss.speed} />
+          <ISSMap positions={iss.positions} speed={iss.speed} unavailable={!iss.current} />
         </div>
       )}
 
       <div className="grid gap-5 xl:grid-cols-2">
-        <SpeedChart positions={iss.positions} />
+        <SpeedChart positions={iss.positions} unavailable={!iss.current} />
         <NewsPieChart articles={news.articles} />
       </div>
 
