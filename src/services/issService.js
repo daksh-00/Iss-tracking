@@ -1,6 +1,7 @@
 import axios from 'axios'
 
 const ISS_POSITION_URL = 'https://api.wheretheiss.at/v1/satellites/25544'
+const ISS_POSITION_INTERNAL_URL = '/api/iss-position'
 const ISS_POSITION_PROXY_URL = 'https://corsproxy.io/?https://api.wheretheiss.at/v1/satellites/25544'
 const PEOPLE_IN_SPACE_URL = 'https://corquaid.github.io/international-space-station-APIs/JSON/people-in-space.json'
 const NOMINATIM_BASE = 'https://nominatim.openstreetmap.org/reverse'
@@ -84,33 +85,43 @@ function mapWhereTheIssPosition(data) {
 export async function getISSPosition() {
   const cacheBust = Date.now()
   try {
-    const { data } = await fetchWithRetry(ISS_POSITION_URL, {
+    const { data } = await fetchWithRetry(ISS_POSITION_INTERNAL_URL, {
       params: { _: cacheBust },
       headers: { 'Cache-Control': 'no-cache' },
-    }, { label: 'ISS position primary' })
+    }, { label: 'ISS position internal proxy' })
     const mapped = mapWhereTheIssPosition(data)
     saveLastKnownPosition(mapped)
     return mapped
   } catch (error) {
     try {
-      const { data } = await fetchWithRetry(ISS_POSITION_PROXY_URL, {
+      const { data } = await fetchWithRetry(ISS_POSITION_URL, {
         params: { _: cacheBust },
         headers: { 'Cache-Control': 'no-cache' },
-      }, { label: 'ISS position proxy' })
+      }, { label: 'ISS position direct' })
       const mapped = mapWhereTheIssPosition(data)
       saveLastKnownPosition(mapped)
       return mapped
-    } catch (proxyError) {
-      console.error('[ISS API] Unable to fetch ISS position from all HTTPS endpoints.', proxyError)
-      const lastKnown = getLastKnownPosition()
-      if (lastKnown) {
-        return {
-          ...lastKnown,
-          timestamp: Math.floor(Date.now() / 1000),
-          isFallback: true,
+    } catch (directError) {
+      try {
+        const { data } = await fetchWithRetry(ISS_POSITION_PROXY_URL, {
+          params: { _: cacheBust },
+          headers: { 'Cache-Control': 'no-cache' },
+        }, { label: 'ISS position cors proxy' })
+        const mapped = mapWhereTheIssPosition(data)
+        saveLastKnownPosition(mapped)
+        return mapped
+      } catch (proxyError) {
+        console.error('[ISS API] Unable to fetch ISS position from all HTTPS endpoints.', proxyError)
+        const lastKnown = getLastKnownPosition()
+        if (lastKnown) {
+          return {
+            ...lastKnown,
+            timestamp: Math.floor(Date.now() / 1000),
+            isFallback: true,
+          }
         }
+        throw directError
       }
-      throw proxyError
     }
   }
 }
